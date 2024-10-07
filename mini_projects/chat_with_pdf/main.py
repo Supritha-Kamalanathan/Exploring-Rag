@@ -4,20 +4,23 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
 
-load_dotenv()
-
+# Load a pre-trained GPT-2 model to generate responses
 gpt_model = GPT2LMHeadModel.from_pretrained('gpt2')
+
+# Load the corresponding tokenizer to convert text into tokens and back
 gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
+# Load a pre-trained embedding model to encode text into vectors
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
+# Helper function to clean the extracted text
 def format_text(text):
     formatted_text = text.replace("\n", ' ')
     return formatted_text
 
+# Function to extract text from PDF, split it into chunks and gather metadata
 def get_texts_info(pdf, chunk_size=1000, chunk_overlap=200):
     texts_info = []
     if pdf is not None:
@@ -44,6 +47,7 @@ def get_texts_info(pdf, chunk_size=1000, chunk_overlap=200):
             })
     return texts_info
 
+# Function to encode text chunks into embeddings using SentenceTransformer
 def calculate_embeddings(texts_info):
     chunks = []
     embeddings = []
@@ -56,6 +60,7 @@ def calculate_embeddings(texts_info):
     
     return chunks, np.array(embeddings)
 
+# Function to generate a response based on retrieved context and the user's query
 def generate_response(retrieved_docs, query):
     text = " ".join(retrieved_docs)
 
@@ -65,10 +70,13 @@ def generate_response(retrieved_docs, query):
     outputs = gpt_model.generate(inputs, max_length=800, num_return_sequences=1, do_sample=True, top_p=0.95, top_k=50)
 
     response = gpt_tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    # Clean up the response by removing the original prompt
     response = response.replace(prompt, "").strip()
 
     return response
 
+# Main function to handle streamlit UI and the overall pipeline
 def main():
     st.set_page_config(
         page_title="Chat with your PDF",
@@ -92,7 +100,7 @@ def main():
 
             with st.spinner("Retrieving relevant docs..."):
                 similarities = cosine_similarity(query_embedding.reshape(1, -1), embeddings)[0]
-                top_indices = similarities.argsort()[-3:][::-1] 
+                top_indices = similarities.argsort()[-3:][::-1] # Retrieve indices of top 3 chunks
                 retrieved_docs = [chunks[i] for i in top_indices]
 
             with st.spinner("Generating response..."):
