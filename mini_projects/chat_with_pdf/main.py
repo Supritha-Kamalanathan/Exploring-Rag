@@ -16,13 +16,14 @@ gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Helper function to clean the extracted text
-def format_text(text):
-    formatted_text = text.replace("\n", ' ')
-    return formatted_text
+def clean_text(text):
+    clean_text = text.replace("\n", ' ')
+    return clean_text
 
 # Function to extract text from PDF, split it into chunks and gather metadata
-def get_texts_info(pdf, chunk_size=1000, chunk_overlap=200):
+def get_chunks(pdf, chunk_size=800, chunk_overlap=100):
     texts_info = []
+    text = ""
     if pdf is not None:
         content = PdfReader(pdf)
 
@@ -33,32 +34,35 @@ def get_texts_info(pdf, chunk_size=1000, chunk_overlap=200):
         )
 
         for page_no, page in enumerate(content.pages):
-            text = format_text(page.extract_text())
-            chunks = splitter.split_text(text)
-            texts_info.append({
-                "page_number": page_no,
-                "page_char_count": len(text),
-                "page_word_count": len(text.split()),
-                "page_sentence_count": len(text.split(". ")),
-                "page_token_count": len(text) / 4,
-                "text": text,
-                "chunks": chunks,
-                "num_chunks": len(chunks)
-            })
-    return texts_info
+            page_text = page.extract_text()
+            text += page_text
+
+            # Metadata to be used for data analysis or optimization
+            # - knowing the approx token count is helpful for models which have token limitation
+            #
+            # texts_info.append({
+            #     "page_number": page_no,
+            #     "page_char_count": len(text),
+            #     "page_word_count": len(text.split()),
+            #     "page_sentence_count": len(text.split(". ")),
+            #     "page_token_count": len(text) / 4,
+            #     "text": page_text,
+            # })
+
+        text = clean_text(text)
+        chunks = splitter.split_text(text)
+        
+    return chunks
 
 # Function to encode text chunks into embeddings using SentenceTransformer
-def calculate_embeddings(texts_info):
-    chunks = []
+def calculate_embeddings(chunks):
     embeddings = []
     
-    for i in texts_info:
-        for chunk in i["chunks"]:
-            chunks.append(chunk)
-            embedding = embedding_model.encode(chunk) 
-            embeddings.append(embedding)
+    for chunk in chunks:
+        embedding = embedding_model.encode(chunk) 
+        embeddings.append(embedding)
     
-    return chunks, np.array(embeddings)
+    return np.array(embeddings)
 
 # Function to generate a response based on retrieved context and the user's query
 def generate_response(retrieved_docs, query):
@@ -66,8 +70,26 @@ def generate_response(retrieved_docs, query):
 
     prompt = f"""Context: {text}\n\nBased on the context, please answer the following question: {query}\n\nAnswer:"""
 
+    # Ensure pad_token_id is set to valid value
+    gpt_tokenizer.pad_token_id = gpt_tokenizer.eos_token_id 
+    # - pad_token_id: ensures sequences are of equal length
+    # - eos_token_id: indicates end of a sentence
+
     inputs = gpt_tokenizer.encode(prompt, return_tensors="pt")
-    outputs = gpt_model.generate(inputs, max_length=800, num_return_sequences=1, do_sample=True, top_p=0.95, top_k=50)
+
+    # Create an attention mask that allows transformer model to focus only on the meaningful tokens while ignoring the others
+    attention_mask = inputs.ne(gpt_tokenizer.pad_token_id)
+
+    outputs = gpt_model.generate(
+        inputs, 
+        attention_mask=attention_mask, # Creates a mask where the model will focus only on the non-padding tokens and ignores padding
+        max_length=700,                # Generate upto 800 tokens
+        num_return_sequences=1,        # Return a single response
+        do_sample=True,                # Use sampling for more varied response
+        top_p=0.95,                    # Consider smallest set of tokens whose cumulative probability is >= top_p
+        top_k=50,                      # Choose from the top 50 most probable tokens
+        temperature=0.8
+        )
 
     response = gpt_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
@@ -92,9 +114,9 @@ def main():
 
         if query:
             with st.spinner("Getting texts info..."):
-                texts_info = get_texts_info(pdf)
+                chunks = get_chunks(pdf)
             with st.spinner("Calculating embeddings..."):
-                chunks, embeddings = calculate_embeddings(texts_info)
+                embeddings = calculate_embeddings(chunks)
 
             query_embedding = embedding_model.encode(query)
 
