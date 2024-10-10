@@ -5,6 +5,10 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import re
 
 # Load a pre-trained GPT-2 model to generate responses
 gpt_model = GPT2LMHeadModel.from_pretrained('gpt2')
@@ -17,11 +21,27 @@ embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Helper function to clean the extracted text
 def clean_text(text):
-    clean_text = text.replace("\n", ' ')
-    return clean_text
+    # Remove characters that are not alphanumeric or whitespace
+    text = re.sub(r"[^\w\s]", "", text)
+
+    # Tokenize the text into individual words
+    tokens = word_tokenize(text)
+
+    # Normalization (convert all tokens to lower case)
+    cleaned_tokens = [token.lower() for token in tokens]
+
+    # Remove stopwords to focus on the meaningful words
+    stop_words = set(stopwords.words("english"))
+    cleaned_tokens = [token for token in cleaned_tokens if token not in stop_words]
+
+    # Lemmatize tokens (reduces every word to its base or root form)
+    lemmatizer = WordNetLemmatizer()
+    cleaned_tokens = [lemmatizer.lemmatize(token) for token in cleaned_tokens]
+
+    return " ".join(cleaned_tokens)
 
 # Function to extract text from PDF, split it into chunks and gather metadata
-def get_chunks(pdf, chunk_size=800, chunk_overlap=100):
+def get_chunks(pdf, chunk_size=400, chunk_overlap=50):
     texts_info = []
     text = ""
     if pdf is not None:
@@ -68,7 +88,7 @@ def calculate_embeddings(chunks):
 def generate_response(retrieved_docs, query):
     text = " ".join(retrieved_docs)
 
-    prompt = f"""Context: {text}\n\nBased on the context, please answer the following question: {query}\n\nAnswer:"""
+    prompt = f"""Context: {text}\n\nBased on the context, please answer the following question in your own words: {query}\n\nAnswer:"""
 
     # Ensure pad_token_id is set to valid value
     gpt_tokenizer.pad_token_id = gpt_tokenizer.eos_token_id 
@@ -83,12 +103,12 @@ def generate_response(retrieved_docs, query):
     outputs = gpt_model.generate(
         inputs, 
         attention_mask=attention_mask, # Creates a mask where the model will focus only on the non-padding tokens and ignores padding
-        max_length=700,                # Generate upto 800 tokens
+        max_length=400,                # Generate upto 800 tokens
         num_return_sequences=1,        # Return a single response
         do_sample=True,                # Use sampling for more varied response
         top_p=0.95,                    # Consider smallest set of tokens whose cumulative probability is >= top_p
         top_k=50,                      # Choose from the top 50 most probable tokens
-        temperature=0.8
+        temperature=0.5
         )
 
     response = gpt_tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -129,6 +149,7 @@ def main():
                 response = generate_response(retrieved_docs, query)
 
             st.write(response)
+            st.write(retrieved_docs)
 
 if __name__ == "__main__":
     main()
